@@ -6,7 +6,8 @@ Repositório de códigos VBA das macros desenvolvidas entre 2001 e 2008 para a T
        - Macro Gráfico -
        - Intergraf -
        - Base_Intergraf -
-       - Macro Oficio Consolidação LDN Evol - 
+       - Macro Oficio Consolidação LDN Evol -
+       - Macro Consolidação ANATEL LDN V1 - 
 ````
 
 ## **Macro - Internacional**
@@ -201,6 +202,7 @@ USU_Name = Environ("USERNAME")
 
 ## **Macro - Grafico**
 <img width="904" height="736" alt="image" src="https://github.com/user-attachments/assets/c719913a-9a6c-4bd6-9764-48990e35e2a9" />
+
 ## Documentação Técnica e Funcional: Aplicação VBA Excel
 
 ---
@@ -937,3 +939,166 @@ Workbooks(MACRO).Sheets("Base").Range("A1:X" & LFM2).Value = _
 
 3. **Desacoplamento de Células de Apoio (`Calculo!A72`):**
 * Os formulários `UserForm3`, `UserForm4` e `UserForm5` utilizam a célula física `Cells(72, 1)` da planilha ativa como memória global temporária. Se a planilha ativa não for `Calculo`, o valor sobrescreve dados de outras abas. Recomenda-se declarar uma variável pública tipada no módulo (`Public TipoConsolidacao As Integer`).
+
+## **Macro Consolidação ANATEL LDN V1**
+<img width="674" height="227" alt="image" src="https://github.com/user-attachments/assets/96daf98a-7a2c-403f-8614-c1d87b7ba16f" />
+
+## Documentação Técnica e Funcional: Aplicação VBA Excel
+
+---
+
+## 1. Visão Geral da Solução
+
+* **Arquivo:** `Macro_Consolidação_ANATEL_LDN_V1.xls`
+* **Domínio de Negócio:** Telecomunicações / Regulatório (**Anatel**). Auditoria, consolidação de desempenho de tráfego de Longa Distância Nacional (**LDN**) e simulação de cenários de expurgo regulatório (**NR - Não Responde** / **LO - Linha Ocupada**).
+* **Finalidade Técnica:** A aplicação realiza a ingestão e enriquecimento de bilhetagem bruta (CDR - *Call Detail Records*) extraída do sistema SGD (*Sistema de Gestão de Desempenho*), gera chaves sintéticas de tarifação/roteamento, processa indicadores de completamento (`OK%`, `PRD%`, `NR%`, `LO%`, etc.) e exporta os demonstrativos oficiais consolidados para as regiões regulatórias da Anatel:
+* **Região II:** Estados do Paraná, Santa Catarina, Rio Grande do Sul, Centro-Oeste, etc. (espelhada na aba `SGD`).
+* **Região III:** Estado de São Paulo (espelhada na aba `SGD_SP`).
+
+
+
+---
+
+## 2. Modelagem e Estrutura de Dados (Abas)
+
+```
+        [ Arquivo Externo: SGD / Bilhetagem (*.xls) ]
+                         │
+                         ▼
+        ┌──────────────────────────────────┐
+        │               Base               │  <- Staging de CDRs brutos (enriquecida com chave composta na Coluna A)
+        └──────────────────────────────────┘
+                         │
+                         ▼
+        ┌──────────────────────────────────┐
+        │             Calculo              │  <- Matriz analítica de regras, PROCV/SOMASE e parâmetros de expurgo
+        └──────────────────────────────────┘
+                 │                │
+                 ▼                ▼
+        ┌────────────────┐ ┌────────────────┐
+        │      SGD       │ │     SGD_SP     │  <- Relatórios finais formatados para exportação (Região II e III)
+        └────────────────┘ └────────────────┘
+
+```
+
+### Detalhamento das Abas:
+
+| Aba | Visibilidade Padrão | Função Técnica e Esquema de Dados |
+| --- | --- | --- |
+| **`Base`** | **Oculta** (`Visible = False`) | **Staging de Bilhetagem / CDR.** Recebe os registros brutos extraídos do SGD (~10.500+ registros). A macro insere uma nova Coluna `A` para concatenar a chave composta de tarifação: `PRE & CSP & IND & "'" & PMM`. Demais colunas contêm: Trânsito, Número de A, Prestadora, Número de B, Direção de origem/destino, Data-hora, Duração e Parte tarifada. |
+| **`Calculo`** | **Visível** | **Motor de Regras e Agregação.** Contém a modelagem analítica dividida por blocos regulatórios: <br>
+
+<br>• **Linhas 1 a 210:** Região II (Paraná, Santa Catarina, Rio Grande do Sul, etc.). Célula `B65`: percentual de expurgo de `NR%`.<br>
+
+<br>• **Linhas 211 a 272:** Região III (São Paulo). Célula `B216`: percentual de expurgo de `NR%`.<br>
+
+<br>Cruza as chaves da aba `Base` para consolidar chamadas tentadas, atendidas (`OK`), perdas e categorias de descarte por bilhetadora (`SP-VMAI`, etc.). |
+| **`SGD`** | **Oculta** (`Visible = False`) | **Template Executivo - Região II.** Relatório consolidado por Estado (`Paraná`, `Santa Catarina`, `Rio Grande do Sul`), Área DD (`41`, `48`, `51`) e Área Local (`Curitiba`, `Florianópolis`, `Porto Alegre`), totalizando índices: `[OK%, PRD%, PAB%, NR%, LO%, CO%]`. |
+| **`SGD_SP`** | **Oculta** (`Visible = False`) | **Template Executivo - Região III (São Paulo).** Relatório oficial segmentado por Áreas DD de SP (`11 - São Paulo`, `13 - Santos`, `19 - Campinas`), com aberturas por localidade e subtotalizações `[TOTAL]`. |
+
+---
+
+## 3. Arquitetura e Engenharia de Módulos VBA
+
+### 3.1. `Módulo21` — Inicialização da Aplicação
+
+* **`Sub auto_open()`:** Executado no momento da abertura da pasta de trabalho. Invoca o formulário `UserForm1.Show` para exibir a tela de abertura / identificação institucional.
+
+---
+
+### 3.2. `Módulo1` — Processamento da Região II (`Sub RegiaoII`)
+
+Rotina dedicada à consolidação de dados da **Região II** (Sul / Centro-Oeste):
+
+1. **Ingestão Externa:**
+* Torna a aba `Base` visível (`Sheets("Base").Visible = True`).
+* Abre o seletor `Application.GetOpenFilename("Arquivos do Microsoft Excel,*.XLS", , "SGD")` para o operador selecionar o CDR diário.
+* Abre o arquivo externo (`Workbooks.Open`) e armazena o nome da janela em `PLANCDR`.
+
+
+2. **Transformação e Chave Sintética:**
+* Insere uma nova Coluna `A` no início da planilha importada.
+* Varre verticalmente a coluna 2 até localizar a linha de cabeçalho cinza (`Interior.ColorIndex = 48`).
+* Itera sobre todas as linhas de bilhetagem até a última (`LFM`), gerando a chave relacional na coluna `A`:
+
+$$\text{Chave} = \text{PRE (prefixo 6 dígitos)} + \text{CSP (prestadora)} + \text{IND (indicador)} + \text{"'"} + \text{PMM (hora 2 dígitos)}$$
+
+
+
+*(Exemplo prático gerado: `413592` + `31` + `OK1` + `'09` $\rightarrow$ `41359231OK1'09`)*.
+
+
+3. **Carga e Ocultação:**
+* Copia todo o conteúdo da planilha tratada, cola na aba `Base` da pasta principal, fecha o arquivo de origem e oculta a aba `Base`.
+
+
+4. **Ciclo Interativo de Expurgo e Simulação:**
+* Solicita via `InputBox` o percentual de corte regulatório de chamadas não atendidas:
+> *"O valor atual é: {Cells(65, 2)}%, para modificá-lo, digite o valor desejado"*
+
+
+* Grava o percentual na célula `Calculo!B65`.
+* A aba `Calculo` recalcula automaticamente as fórmulas dependentes.
+
+
+5. **Exportação Oficial:**
+* Torna a aba `SGD` visível, copia a planilha inteira para uma nova pasta de trabalho desvinculada (`Sheets("SGD").Copy`).
+* Converte fórmulas em valores estáticos (`PasteSpecial xlValues`).
+* Abre diálogo `Application.GetSaveAsFilename` para gravação do arquivo definitivo pelo usuário.
+* Fecha a pasta exportada e questiona via `InputBox` se deseja rodar uma nova iteração (`1-SIM` ou `2-NÃO`).
+* Oculta a aba `SGD` ao encerrar.
+
+
+
+---
+
+### 3.3. `Módulo3` — Processamento da Região III (`Sub RegiaoIII`)
+
+Rotina com arquitetura espelhada voltada para as rotas do **Estado de São Paulo (Região III)**:
+
+* **Ingestão e Montagem de Chave:** Executa a mesma lógica de ETL, localizando o cabeçalho cinza na coluna 1 (`Interior.ColorIndex = 48`) e gerando a chave `PRE & CSP & IND & "'" & PMM`.
+* **Parâmetro de Expurgo:** Atualiza a célula **`Calculo!B216`** (específica para o bloco analítico de SP):
+```vba
+NR = InputBox("O valor atual é: " & Cells(216, 2) & "%, para modificá-lo , digite o valor desejado ", "Exclusão de NR")
+Cells(216, 2) = NR
+
+```
+
+
+* **Exportação do Relatório:** Utiliza como template a aba **`SGD_SP`**, gerando o arquivo consolidado com as localidades paulistas (`11 - São Paulo`, `13 - Santos`, `19 - Campinas`).
+
+---
+
+### 3.4. `Módulo2` e `UserForm1`
+
+* **`Módulo2`:** Módulo de código em branco (resíduo de desenvolvimento).
+* **`UserForm1`:** Formulário de splash inicial exibido no `auto_open`, contendo controles de imagem e labels informativos.
+
+---
+
+## 4. Dicionário de Indicadores e Termos Regulatórios
+
+* **CDR (*Call Detail Record*):** Registro detalhado individual de evento de chamada telefônica (origem, destino, data/hora, tarifação e sinalização de desconexão).
+* **CSP (*Código de Seleção de Prestadora*):** Código da operadora de longa distância (ex.: `31 - Telemar`, `21 - Embratel`, `25 - GVT`).
+* **PMM (*Período de Maior Movimento*):** Intervalos horários com maior densidade de tráfego telefônico (ex.: PMM1 das 09h às 10h), monitorados para fins de qualidade regulatória da Anatel.
+* **OK% (*Completamento*):** Taxa percentual de chamadas atendidas sobre as tentativas totais.
+* **PRD% (*Perdas na Rede*):** Taxa de chamadas não completadas por causas técnicas ou de rede.
+* **NR% (*Não Responde*):** Chamadas sinalizadas com sucesso no destino, mas que tocaram até o tempo limite sem atendimento do usuário.
+* **LO% (*Linha Ocupada*):** Chamadas impedidas por ocupação do terminal de destino.
+* **CO% (*Causa Operacional / Congestionamento*):** Bloqueios decorrentes de indisponibilidade de tronco ou saturação de rota.
+
+---
+
+## 5. Diagnóstico Técnico e Recomendações de Modernização
+
+1. **Unificação e Parametrização dos Módulos 1 e 3 (Eliminação de Código Duplicado):**
+* As rotinas `RegiaoII` e `RegiaoIII` compartilham 95% do código. Recomenda-se criar uma sub-rotina genérica parametrizada `Sub ProcessarRegiao(ByVal NomeAbaSGD As String, ByVal LinhaParametroNR As Long)`, reduzindo a manutenção e evitando divergências entre regiões.
+
+
+2. **Performance e Memória na Manipulação do CDR:**
+* A macro manipula diretamente a interface gráfica (`Columns.Insert`, `Cells.Select`, `Selection.Copy`, `ActiveSheet.Paste`) para bases que superam 10.000 linhas.
+* *Otimização:* Carregar os dados do CDR em uma matriz em memória (`Variant Array`), iterar e concatenar os valores em memória e descarregar diretamente na aba `Base`. Isso reduz o tempo de carga de dezenas de segundos para menos de 1 segundo.
+
+
+3. **Robustez na Busca do Cabeçalho por Cor:**
+* O código localiza o início dos dados buscando a cor cinza da célula (`Cells(lin, 1).Interior.ColorIndex = 48`). Essa abordagem é frágil, pois qualquer alteração na formatação do relatório SGD exportado quebra a rotina. Recomenda-se buscar pelo conteúdo do texto do cabeçalho (ex.: `Find(What:="Trânsito")` ou `Find(What:="Prestadora")`).

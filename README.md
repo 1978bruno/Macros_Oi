@@ -1,7 +1,14 @@
 # Macros_Oi
 Repositório de códigos VBA das macros desenvolvidas entre 2001 e 2008 para a Telemar Oi.
+````
+**Índice**
+       - Macro Internacional -
+       - Macro Gráfico -
+       - Intergraf -
+       - Base_Intergraf - 
+````
 
-##**Macro - Internacional**
+## **Macro - Internacional**
 <img width="1048" height="602" alt="image" src="https://github.com/user-attachments/assets/a7528fee-078c-4e1a-a78c-40b360d5ade5" />
 # Documentação Técnica e Funcional: Aplicação VBA Excel
 
@@ -190,7 +197,7 @@ USU_Name = Environ("USERNAME")
 3. **Tratamento de Exceções em Manipulação de Abas:**
 * A macro cria e exclui abas temporárias (`Sheets.Add`, `Sheets(ATUA).Delete`). Caso ocorra um erro antes do encerramento da sub-rotina, a planilha fica suja com abas órfãs. Recomenda-se adicionar um bloco de tratamento estruturado `On Error GoTo TrataErro` garantindo a limpeza e a restauração de `Application.DisplayAlerts = True` e `Application.ScreenUpdating = True`.
 
-##**Macro - Grafico**
+## **Macro - Grafico**
 <img width="904" height="736" alt="image" src="https://github.com/user-attachments/assets/c719913a-9a6c-4bd6-9764-48990e35e2a9" />
 # Documentação Técnica e Funcional: Aplicação VBA Excel
 
@@ -377,7 +384,7 @@ End If
 
 ```
 
-##**Macro - Intergraf**
+## **Macro - Intergraf**
 <img width="782" height="676" alt="image" src="https://github.com/user-attachments/assets/a71d5fdc-34cc-466e-882d-d7d4654593a1" />
 # Documentação Técnica e Funcional: Aplicação VBA InterGraf
 
@@ -532,3 +539,224 @@ INTERGRAF-V.2.5.5 - Copyright © 2007 - Bruno Rabelo Rocha - Todos os direitos r
 
 3. **Parametrização da Lista de Acesso:**
 * Migrar os IDs da lista de autorização do código-fonte (*hardcoded*) para uma aba de configuração com proteção de planilha, facilitando a governança sem necessidade de alteração de código.
+
+## **Base_Intergraf**
+<img width="877" height="734" alt="image" src="https://github.com/user-attachments/assets/39196d75-1486-4217-b724-16f1acc23206" />
+# Documentação Técnica e Funcional: Aplicação VBA Excel
+
+---
+
+## 1. Visão Geral da Solução
+
+* **Arquivo:** `Base_InterGraf.xls`
+* **Domínio de Negócio:** Monitoramento e Análise de Tráfego Telefônico Internacional (*Backbone Internacional / Telecomunicações*).
+* **Papel no Ecossistema:** Atua como o **Data Mart Operacional Centralizado** da suíte *InterGraf*. É a base histórica robusta responsável por armazenar séries temporais diárias, calcular indicadores de desempenho e gerar a visualização consolidada na aba `FACE` (que é posteriormente consumida pelo frontend gráfico executivo `InterGraf.xls`).
+* **Principais Recursos:**
+* Ingestão incremental automatizada de relatórios diários de tráfego do COI (*Centro de Operações de Rede*).
+* Gestão de **janela móvel histórica de 60 dias** (purga automática de datas antigas).
+* Consolidação diária ou **por período customizado** de rankings parametrizáveis (**TOP 20, 30, 40, 50, 60 ou 70** destinos).
+* Tráfego segmentado em: Saída Internacional (`SAINTE`), Tráfego de Entrada (`ENTRANTE`) e Usuários em Roaming Internacional (`ROAMING`).
+
+
+
+---
+
+## 2. Arquitetura do Modelo de Dados (Abas)
+
+```
+        [ Relatório Bruto COI (.xls) ]
+                     │
+                     ▼ (Módulo2: Ingestão Incremental & Upsert)
+  ┌──────────────────┬──────────────────┬──────────────────┐
+  │      SAINTE      │     ROAMING      │     ENTRANTE     │  <- Séries Temporais (4 Colunas/Dia)
+  └──────────────────┴──────────────────┴──────────────────┘
+                     │
+                     ▼ (Módulo3: Agregação Diária ou por Período)
+             ┌───────────────┐
+             │     FACE      │  <- Rankings TOP 20 a 70 & Auditoria
+             └───────────────┘
+
+```
+
+### Detalhamento das Abas:
+
+| Aba | Papel / Função | Estrutura de Colunas e Dinâmica Temporal |
+| --- | --- | --- |
+| **`FACE`** | **Dashboard Executivo e Metadados** | • Colunas `B:F`: Ranking `TOP N ROAMING - PAISES`<br>
+
+<br>• Colunas `H:K`: Ranking `TOP 10 - Localidades` (Entrante)<br>
+
+<br>• Colunas `M:Q`: Ranking `TOP N - PAISES` (Sainte)<br>
+
+<br>• Cabeçalho com data, período e registro de auditoria do operador. |
+| **`SAINTE`** | **Série Temporal de Tráfego de Saída** | • **Chaves Primárias (`A:C`):** `[País, Rota de saída, Telefonia]` (Fixa/Móvel).<br>
+
+<br>• **Bloco Diário (4 colunas contíguas por data):** `[OK%, TCH, TTC(min), LCR]`.<br>
+
+<br>*(Armazena mais de 60 dias em colunas expandidas horizontalmente).* |
+| **`ROAMING`** | **Série Temporal de Tráfego em Roaming** | Mesma estrutura multidimensional de 4 colunas por data da aba `SAINTE`, filtrando especificamente tráfego originado por parceiros/visitantes (foco em `KPNO` / `MOVEL`). |
+| **`ENTRANTE`** | **Série Temporal de Tráfego Recebido** | • **Chaves Primárias (`A:B`):** `[Localidade, Operadora]` (ex.: `MG-BHE-BELO HORIZONTE`, `TELEMAR`).<br>
+
+<br>• Colunas diárias para métricas de tráfego de entrada. |
+
+---
+
+## 3. Estrutura de Código e Módulos VBA
+
+### 3.1. `Módulo1` — Ciclo de Inicialização
+
+* **`Sub auto_open()`:** Invocado ao abrir o arquivo. Exibe a tela de abertura `UserForm1` em modo não modal (`Show 0`) por 3 segundos utilizando `Application.Wait`, finalizando com `Unload UserForm1`.
+
+---
+
+### 3.2. `Módulo2` — Ingestão Incremental Diária (`Sub internacional`)
+
+Responsável pela extração do relatório externo diário do COI, validação cronológica, manutenção da janela de 60 dias, concatenação dos dados e cálculo de percentual de rota (*LCR Share*).
+
+#### Procedimentos de Entrada:
+
+* **`Sub sainte()`:** Processa `PLANREF = "SAINTE"`.
+* **`Sub pan()`:** Processa `PLANREF = "ROAMING"`.
+* **`Sub entrante()`:** Processa `PLANREF = "ENTRANTE"`.
+
+#### Fluxo Operacional:
+
+1. **Captura do Arquivo:** Abre a caixa de diálogo `Application.GetOpenFilename` para seleção do relatório diário do COI e exibe tela de espera `UserForm3`.
+2. **Cópia da Aba Externa:** Copia a planilha para a pasta de trabalho atual como uma aba de trabalho temporária (`REFCOMP`).
+3. **Validação Cronológica Estrita:**
+* Localiza a data no cabeçalho do arquivo importado (`DT`).
+* Compara com a data da última coluna presente na base (`Data1`).
+* Valida via `DateDiff("d", Data1, DT)` se o arquivo é rigorosamente o dia seguinte (`D+1`). Caso não seja, emite alerta com opção de abortar (`vbOKCancel`).
+* Suporta inserção retroativa no meio do grid caso seja importado um dia faltante anterior.
+
+
+4. **Política de Retenção de Dados (Janela Móvel de 60 Dias):**
+```vba
+NREF = DateDiff("d", Cells(1, 4), Cells(1, CLFM - 4))
+If NREF > 60 Then
+    Range(Columns(4), Columns(7)).Delete
+    CLFM = CLFM - 4
+End If
+
+```
+
+
+Garante que a planilha não ultrapasse os limites de colunas do Excel legado (.xls suporta até 256 colunas).
+5. **Mapeamento Dinâmico de Colunas:** Localiza via `Find` a posição exata no relatório de origem dos campos: `País/Localidade`, `Rota de saída/Operadora`, `Telefonia/PRD`, `OK%`, `TCH` e `TTC(Min)`.
+6. **Inserção / Atualização (Upsert):**
+* Descarta registros agregadores (`[TOTAL]`, `NI-NI-NÃO IDENTIFICADA`, `EX-EXT-EXTERIOR`, `ADMI`).
+* No caso de `ROAMING`, filtra apenas `RSA = "KPNO"` e `TEL = "MOVEL"`.
+* Realiza busca linear na base: se a combinação existir, preenche as métricas do dia; caso não exista, insere um novo destino no final da tabela.
+
+
+7. **Cálculo Matemático do LCR Share (% de Distribuição da Rota):**
+Para cada país e tipo de telefonia, calcula a soma total de chamadas (`TTCH`) e preenche a 4ª coluna do dia:
+
+$$\text{LCR} = \left(\frac{\text{TCH da Rota}}{\sum \text{TCH do País e Telefonia}}\right) \times 100$$
+
+
+8. **Encadeamento Automático:** Ao concluir a atualização da aba `SAINTE`, a rotina altera automaticamente `PLANREF = "ROAMING"` e executa o processamento do roaming para o mesmo arquivo antes de finalizar.
+9. **Finalização:** Exibe a mensagem de sucesso `UserForm4` por 3 segundos.
+
+---
+
+### 3.3. `Módulo3` — Consolidação, Agregações e Painel Executivo
+
+Contém a inteligência analítica para sintetizar os dados das séries temporais e atualizar os quadros de ranking da aba `FACE`.
+
+#### Declarações de API do Windows (Win32):
+
+```vba
+Private Declare Function GetComputerName Lib "kernel32" Alias "GetComputerNameA" _
+(ByVal lpBuffer As String, nSize As Long) As Long
+
+Private Declare Function GetUserName Lib "advapi32.dll" Alias "GetUserNameA" _
+(ByVal lpBuffer As String, nSize As Long) As Long
+
+```
+
+#### Procedimentos Principais:
+
+* **`Sub atualiza_sainte()` (Consolidação Diária):**
+1. Abre `UserForm2` para o usuário escolher o tamanho do ranking desejado: **TOP 20, 30, 40, 50, 60 ou 70** (`TOPREF`).
+2. Cria uma aba temporária e extrai os pares únicos de `[País, Telefonia]`.
+3. Varre a última data disponível na base (`UTCOL`), somando o volume de tráfego (`TCH`) de todas as rotas e calculando o volume global (`TCHF`).
+4. Ordena os destinos de forma decrescente pelo tráfego total.
+5. Trunca a lista na quantidade selecionada (`TOPREF`) e calcula a coluna `% Int.` (participação do país sobre o tráfego internacional total):
+
+$$\% \text{ Int.} = \left(\frac{\text{TCH do País}}{\text{TCH Total Internacional}}\right) \times 100$$
+
+
+6. Transfere os dados consolidados para a aba `FACE`:
+* Para `SAINTE`: Coluna 13 (`M:Q`).
+* Para `ROAMING`: Coluna 2 (`B:F`).
+
+
+7. Formata dinamicamente as bordas e numeração ordinal de 1 a N via `AutoFill`.
+8. Deleta a aba temporária e invoca `Ult_Atua`.
+
+
+* **`Sub atualiza_periodo()` (Consolidação Multi-Diária por Intervalo Customizado):**
+* Executa a consolidação para ambos os tráfegos (`SAINTE` e `ROAMING`) de forma iterativa (`For ST = 1 To 2`).
+* Abre o formulário `UserForm5`, permitindo ao operador digitar a Data Inicial (`DTI`) e a Data Final (`DTF`).
+* Identifica os índices de coluna inicial (`CLFI`) e final (`CLFF`).
+* Itera ao longo das colunas do intervalo com passo 4 (`COLU = COLU + 4`), acumulando a soma do `TCH` de todos os dias selecionados.
+* Gera o ranking acumulado do período na aba `FACE` com a legenda: `"Periodo: {DTI} à {DTF}"`.
+
+
+* **`Sub atualiza_entrante()`:**
+* Totaliza as tentativas de chamadas por localidade na aba `ENTRANTE`, gerando o ranking **TOP 10** em `FACE!R35:S44`.
+
+
+* **`Sub Ult_Atua()` (Auditoria de Operação):**
+* Recupera o login de rede e o hostname da estação de trabalho via APIs do Windows.
+* Grava em `FACE!A4`:
+> *"{USU_Name} usando a máquina {Comp_Name}"*
+
+
+
+
+
+---
+
+### 3.4. `Módulo4` — Atalhos de Filtro em Tabela
+
+* **`Sub Filtro_Sainte()` / `Sub Filtro_Entrante()`:** Procedimentos utilitários que capturam o valor da célula atualmente selecionada (`Selection`) e ativam imediatamente o `AutoFilter` na coluna 1 da respectiva aba.
+
+---
+
+### 3.5. Componentes de Interface (`UserForms`)
+
+| Formulário | Descrição e Componentes |
+| --- | --- |
+| **`UserForm1`** | Splash screen de abertura do arquivo (exibido por 3 segundos). |
+| **`UserForm2`** | Modal de parametrização do tamanho do ranking com botões de opção (`OptionButton1` a `6` para TOP 20, 30, 40, 50, 60 ou 70). |
+| **`UserForm3`** | Tela de bloqueio e aviso visual durante o processamento da macro ("Aguarde..."). |
+| **`UserForm4`** | Splash screen temporizado de conclusão do processo de importação. |
+| **`UserForm5`** | Diálogo de parametrização de intervalo de datas (`TextBox1:3` para DTI e `TextBox4:6` para DTF), com validação de consistência cronológica via `DateDiff`. |
+
+---
+
+## 4. Dicionário de Termos Técnicos e Negócio
+
+* **TCH (*Total Calls Handled*):** Volume total de tentativas de chamadas telefônicas.
+* **TTC (*Total Time of Conversation*):** Minutos totais tarifados/conversados.
+* **OK% (*Answer-Seizure Ratio - ASR*):** Taxa de completamento percentual de chamadas atendidas sobre tentadas.
+* **LCR (*Least Cost Routing Share*):** Percentual do volume total do país que foi roteado pela operadora parceira indicada.
+* **% Int.:** Participação percentual do tráfego do país específico sobre a volumetria total do tráfego internacional brasileiro monitorado.
+
+---
+
+## 5. Avaliação Técnica e Recomendações de Engenharia
+
+1. **Compatibilidade com Excel 64 bits:**
+* As declarações `GetComputerNameA` e `GetUserNameA` no `Módulo3` utilizam declarações legadas de 32 bits. Para rodar sem erros no Office 64 bits, devem ser adaptadas com a diretiva `#If VBA7` e `PtrSafe`, ou substituídas nativamente por `Environ("USERNAME")` e `Environ("COMPUTERNAME")`.
+
+
+2. **Eliminação do Limite de 256 Colunas:**
+* A aplicação foi projetada sob a limitação do formato Excel 97-2003 (.xls com 256 colunas máximas), exigindo a deleção das colunas com mais de 60 dias (`Columns(4:7).Delete`). Ao converter a pasta para o formato moderno `.xlsm` (que suporta até 16.384 colunas), essa restrição torna-se desnecessária, permitindo histórico anual ou plurianual.
+
+
+3. **Otimização Drástica de Performance:**
+* O código itera sobre células da planilha com loops aninhados `Do Until` e manipulação visual de seleção (`.Select`, `.Copy`, `.PasteSpecial`).
+* *Refatoração recomendada:* O carregamento das colunas para matrizes em memória (`Variant Arrays`) ou o uso do objeto `Scripting.Dictionary` para agregação de chaves acelera as rotinas `atualiza_sainte` e `atualiza_periodo` de minutos para milissegundos.

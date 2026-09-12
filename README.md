@@ -5,11 +5,13 @@ Repositório de códigos VBA das macros desenvolvidas entre 2001 e 2008 para a T
        - Macro Internacional -
        - Macro Gráfico -
        - Intergraf -
-       - Base_Intergraf - 
+       - Base_Intergraf -
+       - Macro Oficio Consolidação LDN Evol - 
 ````
 
 ## **Macro - Internacional**
 <img width="1048" height="602" alt="image" src="https://github.com/user-attachments/assets/a7528fee-078c-4e1a-a78c-40b360d5ade5" />
+
 ## Documentação Técnica e Funcional: Aplicação VBA Excel
 
 ---
@@ -386,6 +388,7 @@ End If
 
 ## **Macro - Intergraf**
 <img width="782" height="676" alt="image" src="https://github.com/user-attachments/assets/a71d5fdc-34cc-466e-882d-d7d4654593a1" />
+
 ## Documentação Técnica e Funcional: Aplicação VBA InterGraf
 
 ---
@@ -542,6 +545,7 @@ INTERGRAF-V.2.5.5 - Copyright © 2007 - Bruno Rabelo Rocha - Todos os direitos r
 
 ## **Base_Intergraf**
 <img width="877" height="734" alt="image" src="https://github.com/user-attachments/assets/39196d75-1486-4217-b724-16f1acc23206" />
+
 ## Documentação Técnica e Funcional: Aplicação VBA Excel
 
 ---
@@ -760,3 +764,176 @@ $$\% \text{ Int.} = \left(\frac{\text{TCH do País}}{\text{TCH Total Internacion
 3. **Otimização Drástica de Performance:**
 * O código itera sobre células da planilha com loops aninhados `Do Until` e manipulação visual de seleção (`.Select`, `.Copy`, `.PasteSpecial`).
 * *Refatoração recomendada:* O carregamento das colunas para matrizes em memória (`Variant Arrays`) ou o uso do objeto `Scripting.Dictionary` para agregação de chaves acelera as rotinas `atualiza_sainte` e `atualiza_periodo` de minutos para milissegundos.
+
+## **Macro Oficio Consolidação LDN Evol**
+<img width="953" height="521" alt="image" src="https://github.com/user-attachments/assets/0d21155c-7393-4216-aeb5-a1da8402d04b" />
+
+## Documentação Técnica e Funcional: Aplicação VBA Excel
+
+---
+
+## 1. Visão Geral da Solução
+
+* **Arquivo:** `Macro_Oficio_Consolidação_LDN_Evol.xls`
+* **Domínio de Negócio:** Telecomunicações / Regulatório (**Anatel**). Auditoria, consolidação e expurgo de indicadores de qualidade de chamadas de Longa Distância Nacional (**LDN**) associados ao cumprimento do **Ofício 745** e metas regulatórias de PMM (*Período de Maior Movimento*).
+* **Finalidade Técnica:** A aplicação automatiza a extração e carga de bilhetagem/CDR (*Call Detail Records*) oriundos do sistema SGD (*Sistema de Gestão de Desempenho*), correlaciona registros por chaves concatenadas (`DDD + CSP + Indicador + PMM`), simula cenários iterativos de expurgo de chamadas não completadas (expurgo percentual de **NR - Não Responde** e **LO - Linha Ocupada**) e gera planilhas de consolidação prontas para envio aos órgãos reguladores e operadoras parceiras (Telemar, Brasil Telecom, Sercomtel, Telefônica).
+
+---
+
+## 2. Modelagem e Estrutura de Dados (Abas)
+
+```
+        [ Arquivo Externo: SGD / CDR (*.xls) ]
+                         │
+                         ▼
+        ┌──────────────────────────────────┐
+        │               Base               │  <- Repositório bruto de CDR (transposto com chave composta)
+        └──────────────────────────────────┘
+                         │
+                         ▼
+        ┌──────────────────────────────────┐
+        │             Calculo              │  <- Matriz de agregação, simulação e expurgo (PMM1, 2 e 3)
+        └──────────────────────────────────┘
+                         │
+                         ▼
+        ┌──────────────────────────────────┐
+        │               SGD                │  <- Relatório final formatado e exportado via SaveAs
+        └──────────────────────────────────┘
+
+```
+
+### Detalhamento das Abas:
+
+| Aba | Visibilidade Padrão | Função Técnica e Esquema de Dados |
+| --- | --- | --- |
+| **`Calculo`** | **Visível** | **Coração do Motor de Regras.** Contém: <br>
+
+<br>• Matrizes base de rotas por operadora e região (colunas `BT` a `CN`).<br>
+
+<br>• Linhas 63 a 68: Parâmetros de formulação dinâmica por PMM e níveis de totalização (`[TOTAL]`, `[TOTAL] nivel2`, `[TOTAL] nivel3`).<br>
+
+<br>• Células `B64:F65`: Percentuais de expurgo aplicados a **NR** e **LO** para PMM1, PMM2 e PMM3.<br>
+
+<br>• Linha 80 em diante: Grid analítico comparando chamadas tentadas, completadas e causas de não completamento. |
+| **`Base`** | **Oculta** (`xlSheetHidden`) | **Staging de Bilhetagem.** Recebe a massa bruta de CDR importada do SGD (até ~50.000 registros). Cria e armazena na Coluna A a chave sintética de cruzamento: `DDD & CSP & IND & "'" & PMM`. |
+| **`SGD`** | **Oculta** (`xlSheetHidden`) | **Template de Exportação Executiva.** Contém o layout oficial de reporte com cabeçalho de prestadora (ex.: `31 - Telemar`), operadora de origem (`BRASIL TELECOM`, `SERCOMTEL`, `TELEFONICA`) e colunas de índices percentuais: `[PMM, Área DD, LDN, OK'%, PRD'%, PAB'%, NR'%, LO'%, CO'%, OU'%]`. |
+
+---
+
+## 3. Arquitetura e Engenharia de Módulos VBA
+
+### 3.1. `Módulo1` — Fluxo Principal de Processamento (`Sub auto_open`)
+
+O procedimento `auto_open` orquestra a interface do operador e o fluxo de extração e transformação:
+
+#### 1. Roteamento de Negócio e Seleção de Escopo:
+
+* Exibe `UserForm1` (splash inicial) na primeira execução.
+* Aciona `UserForm3` para selecionar o tipo de tratamento:
+* **Opção 1:** Consolidação Regional (`DDD-X FCN7 LDN`) $\rightarrow$ Direciona para `inicio3`.
+* **Opção 2:** Consolidação de Operadora sob Ofício 745 (`FCN7 LDN`) $\rightarrow$ Direciona para `inicio2`.
+* **Opção 3:** Sair.
+
+
+* **Seletor de Operadora (`UserForm4`):**
+* `1`: Brasil Telecom (carrega template das colunas `BT` / índice 72).
+* `2`: Sercomtel (colunas `CF` / índice 84).
+* `3`: Telefônica (colunas `CB` / índice 80).
+* `4`: CTBC (emite alerta de indisponibilidade momentânea do layout).
+
+
+* **Seletor de Região (`UserForm5`):**
+* `1`: Região II (colunas `CK` / índice 89).
+* `2`: Região III (colunas `CN` / índice 92).
+
+
+
+#### 2. Carga Dinâmica de Fórmulas de Totalização:
+
+O código copia o esqueleto selecionado para `Calculo!A80` e varre as linhas aplicando dinamicamente blocos de fórmulas matriciais pré-configuradas:
+
+* Registros `PMM1`: Copia fórmulas da linha `Calculo!63` (I63:...).
+* Registros `PMM2`: Copia fórmulas da linha `Calculo!64`.
+* Registros `PMM3`: Copia fórmulas da linha `Calculo!65`.
+* Subtotais de Nível 1, 2 e 3 (`[TOTAL]`): Copia fórmulas das linhas 66, 67 e 68 respectivamente.
+
+#### 3. Ingestão e Enriquecimento do CDR Bruto:
+
+1. Abre diálogo `Application.GetOpenFilename` solicitando o arquivo diário gerado pelo SGD.
+2. Abre o arquivo externo e insere uma nova coluna `A` no início.
+3. Localiza a linha inicial do grid através da cor cinza (`Interior.ColorIndex = 15`).
+4. **Criação da Chave Primária Sintética:** Itera até o fim da massa de dados gerando a chave:
+
+$$\text{Chave} = \text{DDD (pos 1-2)} + \text{CSP} + \text{Indicador} + \text{"'"} + \text{PMM (pos 12-13)}$$
+
+
+5. Transpõe os dados tratados para a aba `Base` da pasta principal e encerra a planilha externa sem salvar alterações.
+
+#### 4. Motor Iterativo de Simulação e Expurgo (Loop `Do Until REP = 7`):
+
+* Abre o modal `UserForm2` para entrada dos percentuais de corte de **NR** e **LO** por PMM.
+* O motor recalcula as fórmulas na planilha `Calculo`, recalculando os indicadores `OK'%` (Completamento) e `CO'%` (Chamadas Ocupadas).
+* **Exportação do Relatório Consolidado:**
+1. Torna a aba `SGD` visível.
+2. Ajusta o cabeçalho de prestadora de origem.
+3. Replica as linhas consolidadas de `Calculo` para `SGD`.
+4. Converte fórmulas em valores puros (`PasteSpecial xlValues`).
+5. Copia a aba `SGD` para uma nova pasta de trabalho desvinculada.
+6. Dispara `Application.GetSaveAsFilename` para que o operador salve o arquivo oficial consolidado.
+7. Fecha a pasta exportada e repete o ciclo para ajustes finos se necessário.
+
+
+
+#### 5. Teardown e Limpeza de Segurança:
+
+* Ao término, limpa todos os dados sensíveis da aba `Base` e `SGD` (`Selection.Clear`).
+* Oculta novamente as abas `Base` e `SGD` (`Visible = False`).
+* Oculta as colunas de template `BS:CF` e as linhas intermediárias de processamento (`Rows("61:3848").Hidden = True`), mantendo a integridade visual da planilha.
+
+---
+
+### 3.2. Módulos de Interface (`UserForms`)
+
+| Formulário | Função Técnica e Lógica de Controle |
+| --- | --- |
+| **`UserForm1`** | Splash screen institucional exibida apenas na primeira abertura da sessão (`Static pula`). |
+| **`UserForm2`** | **Painel de Simulação de Expurgo:** Permite input manual de `NR1`, `NR2`, `NR3` e `LO1`, `LO2`, `LO3`. Possui rotina (`CommandButton2_Click`) que efetua contagem prévia de rotas e indicadores fora da meta regulatória (`Cells(OK, 24) < "70"`). Grava os parâmetros em `Calculo!B64:F65`. |
+| **`UserForm3`** | Menu de seleção do escopo da consolidação (`1`: Região / `2`: Ofício 745 Operadora / `3`: Sair). Grava a escolha na célula de apoio `Calculo!A72`. |
+| **`UserForm4`** | Menu de seleção de operadoras sob o Ofício 745 (`1`: Brasil Telecom, `2`: Sercomtel, `3`: Telefônica, `4`: CTBC, `5`: Cancelar). Grava o resultado em `Calculo!A72`. |
+| **`UserForm5`** | Menu de seleção de região regulatória (`1`: Região II, `2`: Região III, `3`: Cancelar). Grava o resultado em `Calculo!A72`. |
+
+---
+
+## 4. Dicionário de Termos e Regras de Telecom / Regulatório
+
+* **LDN (*Longa Distância Nacional*):** Tráfego telefônico interurbano inter-regional ou interestadual.
+* **PMM (*Período de Maior Movimento*):** Janelas horárias de pico de tráfego regulamentadas pela Anatel (geralmente PMM1, PMM2 e PMM3 ao longo do dia comercial) onde o índice de completamento não pode sofrer degradação.
+* **Ofício 745:** Ato regulatório/diretriz técnica estabelecendo critérios de expurgo de chamadas não atribuíveis à rede da prestadora de transporte (ex.: falha de terminal ou abandono do usuário).
+* **OK% / OK'%:** Taxa de chamadas atendidas e completadas antes e após os expurgos regulatórios.
+* **NR (*Não Responde*):** Chamadas completadas até o destino que tocaram até o tempo limite (*timeout*) sem que o usuário atendesse.
+* **LO (*Linha Ocupada*):** Tentativas bloqueadas devido ao terminal de destino estar ocupado.
+* **CO (*Causa Operacional / Congestionamento*):** Bloqueios gerados por saturação de enlace ou indisponibilidade de rota.
+* **CSP (*Código de Seleção de Prestadora*):** Dígito de seleção da operadora de longa distância (ex.: 31, 14, 15, 21).
+
+---
+
+## 5. Diagnóstico Técnico e Oportunidades de Refatoração
+
+1. **Eliminação de `.Select`, `.Activate` e Área de Transferência:**
+* O código usa comandos pesados como `Cells.Select`, `Selection.Copy` e `ActiveSheet.Paste` em tabelas com mais de 45.000 linhas na aba `Base`, o que pode travar o Excel ou causar *Out of Memory*.
+* *Refatoração sugerida:* Substituir a cópia gráfica pela manipulação direta via array ou leitura direta de intervalos:
+```vba
+Workbooks(MACRO).Sheets("Base").Range("A1:X" & LFM2).Value = _
+    Workbooks(PLANCDR).Sheets(1).Range("A1:X" & LFM2).Value
+
+```
+
+
+
+
+2. **Correção Lógica nas Comparações do `UserForm2`:**
+* No `CommandButton2_Click`, a condição de avaliação compara tipos incompatíveis como strings alfanuméricas: `Cells(OK, 24) < "70"`. Valores numéricos formatados como percentual devem ser comparados como `Val(Cells(OK, 24).Value) < 0.70`.
+
+
+3. **Desacoplamento de Células de Apoio (`Calculo!A72`):**
+* Os formulários `UserForm3`, `UserForm4` e `UserForm5` utilizam a célula física `Cells(72, 1)` da planilha ativa como memória global temporária. Se a planilha ativa não for `Calculo`, o valor sobrescreve dados de outras abas. Recomenda-se declarar uma variável pública tipada no módulo (`Public TipoConsolidacao As Integer`).
